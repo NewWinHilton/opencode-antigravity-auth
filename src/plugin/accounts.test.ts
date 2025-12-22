@@ -490,16 +490,6 @@ describe("AccountManager", () => {
       manager.markRateLimited(claude!, 60000, "claude");
       manager.getCurrentOrNextForFamily("claude");
 
-      const savedStorage: AccountStorageV3[] = [];
-      const originalSaveAccounts = await import("./storage").then(m => m.saveAccounts);
-      vi.mock("./storage", async () => {
-        const actual = await vi.importActual("./storage");
-        return {
-          ...actual,
-          saveAccounts: vi.fn((s: AccountStorageV3) => { savedStorage.push(s); }),
-        };
-      });
-
       expect(manager.getCurrentAccountForFamily("claude")?.index).toBe(1);
       expect(manager.getCurrentAccountForFamily("gemini")?.index).toBe(0);
     });

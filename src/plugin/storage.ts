@@ -113,7 +113,7 @@ function migrateV1ToV2(v1: AccountStorageV1): AccountStorage {
   };
 }
 
-function migrateV2ToV3(v2: AccountStorage): AccountStorageV3 {
+export function migrateV2ToV3(v2: AccountStorage): AccountStorageV3 {
   return {
     version: 3,
     accounts: v2.accounts.map((acc) => {

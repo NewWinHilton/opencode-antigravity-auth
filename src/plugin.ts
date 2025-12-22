@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { ANTIGRAVITY_ENDPOINT_FALLBACKS, ANTIGRAVITY_PROVIDER_ID, ANTIGRAVITY_HEADERS, GEMINI_CLI_HEADERS, type HeaderStyle } from "./constants";
+import { ANTIGRAVITY_ENDPOINT_FALLBACKS, ANTIGRAVITY_PROVIDER_ID, type HeaderStyle } from "./constants";
 import { authorizeAntigravity, exchangeAntigravity } from "./antigravity/oauth";
 import type { AntigravityTokenExchangeResult } from "./antigravity/oauth";
 import { accessTokenExpired, isOAuthAuth, parseRefreshParts } from "./plugin/auth";
@@ -210,6 +210,10 @@ async function persistAccountPool(
     version: 3,
     accounts,
     activeIndex: clampInt(activeIndex, 0, accounts.length - 1),
+    activeIndexByFamily: {
+      claude: clampInt(activeIndex, 0, accounts.length - 1),
+      gemini: clampInt(activeIndex, 0, accounts.length - 1),
+    },
   });
 }
 

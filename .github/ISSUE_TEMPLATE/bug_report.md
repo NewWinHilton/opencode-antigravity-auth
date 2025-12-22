@@ -29,7 +29,7 @@ What actually happens.
 **Logs**
 If applicable, attach logs. Enable debug logging with `export OPENCODE_ANTIGRAVITY_DEBUG=1` (or verbose with `export OPENCODE_ANTIGRAVITY_DEBUG=2` / `verbose`).
 
-Logs are written to `~/.config/opencode/antigravity-logs/antigravity-debug-<timestamp>.log` (or `$XDG_CONFIG_HOME/opencode/antigravity-logs/...`). Override the directory with `OPENCODE_ANTIGRAVITY_LOG_DIR`.
+Logs are written to `~/.config/opencode/antigravity-logs/antigravity-debug-<timestamp>.log` (MacOS) or `%APPDATA%\opencode\antigravity-logs\antigravity-debug-<timestamp>.log` (Windows). Override the directory with `OPENCODE_ANTIGRAVITY_LOG_DIR`.
 
 **Compliance Checklist**
 Please confirm:
