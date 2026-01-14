@@ -32,7 +32,7 @@ import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, refreshAccessToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
 import { clearAccounts, loadAccounts, saveAccounts } from "./plugin/storage";
-import { AccountManager, type ModelFamily } from "./plugin/accounts";
+import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs } from "./plugin/accounts";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import { loadConfig, type AntigravityConfig } from "./plugin/config";
 import { createSessionRecoveryHook, getRecoverySuccessToast } from "./plugin/recovery";
@@ -772,11 +772,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
 
       const accountManager = await AccountManager.loadFromDisk(auth);
       if (accountManager.getAccountCount() > 0) {
-        try {
-          await accountManager.saveToDisk();
-        } catch (error) {
-          log.error("Failed to persist initial account pool", { error: String(error) });
-        }
+        accountManager.requestSaveToDisk();
       }
 
       // Initialize proactive token refresh queue (ported from LLM-API-Key-Proxy)
@@ -815,10 +811,6 @@ export const createAntigravityPlugin = (providerId: string) => async (
       return {
         apiKey: "",
         async fetch(input, init) {
-          // If the request is for the *other* provider, we might still want to intercept if URL matches
-          // But strict compliance means we only handle requests if the auth provider matches.
-          // Since loader is instantiated per provider, we are good.
-
           if (!isGenerativeLanguageRequest(input)) {
             return fetch(input, init);
           }
@@ -972,11 +964,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
               accountManager.markToastShown(account.index);
             }
 
-            try {
-              await accountManager.saveToDisk();
-            } catch (error) {
-              log.error("Failed to persist rotation state", { error: String(error) });
-            }
+            accountManager.requestSaveToDisk();
 
             let authRecord = accountManager.toAuthDetails(account);
 
@@ -1253,13 +1241,15 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   const quotaKey = headerStyleToQuotaKey(headerStyle, family);
                   const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey, serverRetryMs);
 
-                  const waitTimeFormatted = formatWaitTime(delayMs);
-                  const isCapacityExhausted =
-                    bodyInfo.reason === "MODEL_CAPACITY_EXHAUSTED" ||
-                    (typeof bodyInfo.message === "string" && bodyInfo.message.toLowerCase().includes("no capacity"));
+                  const rateLimitReason = parseRateLimitReason(bodyInfo.reason, bodyInfo.message);
+                  const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
+                  const effectiveDelayMs = Math.max(delayMs, smartBackoffMs);
+                  const waitTimeFormatted = formatWaitTime(effectiveDelayMs);
+                  
+                  const isCapacityExhausted = rateLimitReason === "MODEL_CAPACITY_EXHAUSTED";
 
                   pushDebug(
-                    `429 idx=${account.index} email=${account.email ?? ""} family=${family} delayMs=${delayMs} attempt=${attempt}`,
+                    `429 idx=${account.index} email=${account.email ?? ""} family=${family} delayMs=${effectiveDelayMs} attempt=${attempt} reason=${rateLimitReason}`,
                   );
                   if (bodyInfo.message) {
                     pushDebug(`429 message=${bodyInfo.message}`);
@@ -1276,7 +1266,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                     account.email,
                     family,
                     response.status,
-                    delayMs,
+                    effectiveDelayMs,
                     bodyInfo,
                   );
 
@@ -1285,15 +1275,15 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   getHealthTracker().recordRateLimit(account.index);
 
                   if (isCapacityExhausted) {
-                    const failures = account.consecutiveFailures ?? 0;
-                    const capacityBackoffMs = getCapacityBackoffDelay(failures);
-                    account.consecutiveFailures = failures + 1;
+                    const capacityBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
+                    accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
                     
                     const backoffFormatted = formatWaitTime(capacityBackoffMs);
-                    pushDebug(`capacity exhausted on account ${account.index}, backoff=${capacityBackoffMs}ms (failure #${failures + 1})`);
+                    const failures = account.consecutiveFailures ?? 0;
+                    pushDebug(`capacity exhausted on account ${account.index}, backoff=${capacityBackoffMs}ms (failure #${failures})`);
 
                     await showToast(
-                      `⏳ Server at capacity. Waiting ${backoffFormatted}... (attempt ${failures + 1})`,
+                      `Server at capacity. Waiting ${backoffFormatted}... (attempt ${failures})`,
                       "warning",
                     );
                     await sleep(capacityBackoffMs, abortSignal);
@@ -1302,27 +1292,21 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   
                   const accountLabel = account.email || `Account ${account.index + 1}`;
 
-                  // Progressive retry: 1st 429 → 1s then switch (if enabled) or retry same
                   if (attempt === 1) {
                     await showToast(`Rate limited. Quick retry in 1s...`, "warning");
                     await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
                     
                     if (config.switch_on_first_rate_limit && accountCount > 1) {
-                      accountManager.markRateLimited(account, delayMs, family, headerStyle, model);
+                      accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
                       shouldSwitchAccount = true;
                       break;
                     }
                     continue;
                   }
 
-                  // Mark this header style as rate-limited for this account
-                  accountManager.markRateLimited(account, delayMs, family, headerStyle, model);
+                  accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
 
-                  try {
-                    await accountManager.saveToDisk();
-                  } catch (error) {
-                    log.error("Failed to persist rate-limit state", { error: String(error) });
-                  }
+                  accountManager.requestSaveToDisk();
 
                   // For Gemini, try prioritized Antigravity across ALL accounts first
                   if (family === "gemini") {
