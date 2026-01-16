@@ -489,6 +489,101 @@ describe("transform/gemini", () => {
       expect(thinkingConfig.includeThoughts).toBe(true);
       expect(thinkingConfig).not.toHaveProperty("thinkingBudget");
     });
+
+    describe("Google Search (Grounding)", () => {
+      it("injects googleSearchRetrieval tool when mode is 'auto'", () => {
+        const payload: RequestPayload = { contents: [], tools: [] };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-pro",
+          googleSearch: { mode: "auto", threshold: 0.3 },
+        });
+        const tools = payload.tools as unknown[];
+        expect(tools).toHaveLength(1);
+        expect(tools[0]).toEqual({
+          googleSearchRetrieval: {
+            dynamicRetrievalConfig: {
+              mode: "MODE_DYNAMIC",
+              dynamicThreshold: 0.3,
+            },
+          },
+        });
+      });
+
+      it("uses custom threshold value", () => {
+        const payload: RequestPayload = { contents: [] };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-flash",
+          googleSearch: { mode: "auto", threshold: 0.7 },
+        });
+        const tools = payload.tools as unknown[];
+        const searchTool = tools[0] as Record<string, unknown>;
+        const retrieval = searchTool.googleSearchRetrieval as Record<string, unknown>;
+        const config = retrieval.dynamicRetrievalConfig as Record<string, unknown>;
+        expect(config.dynamicThreshold).toBe(0.7);
+      });
+
+      it("defaults threshold to 0.3 when not specified", () => {
+        const payload: RequestPayload = { contents: [] };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-pro",
+          googleSearch: { mode: "auto" },
+        });
+        const tools = payload.tools as unknown[];
+        const searchTool = tools[0] as Record<string, unknown>;
+        const retrieval = searchTool.googleSearchRetrieval as Record<string, unknown>;
+        const config = retrieval.dynamicRetrievalConfig as Record<string, unknown>;
+        expect(config.dynamicThreshold).toBe(0.3);
+      });
+
+      it("does not inject search tool when mode is 'off'", () => {
+        const payload: RequestPayload = { contents: [], tools: [] };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-pro",
+          googleSearch: { mode: "off" },
+        });
+        const tools = payload.tools as unknown[];
+        expect(tools).toHaveLength(0);
+      });
+
+      it("does not inject search tool when googleSearch is undefined", () => {
+        const payload: RequestPayload = { contents: [], tools: [] };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-pro",
+        });
+        const tools = payload.tools as unknown[];
+        expect(tools).toHaveLength(0);
+      });
+
+      it("appends search tool to existing tools array", () => {
+        const payload: RequestPayload = {
+          contents: [],
+          tools: [
+            { function: { name: "existing_tool", input_schema: { type: "object" } } },
+          ],
+        };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-pro",
+          googleSearch: { mode: "auto", threshold: 0.5 },
+        });
+        const tools = payload.tools as unknown[];
+        expect(tools).toHaveLength(2);
+        const lastTool = tools[1] as Record<string, unknown>;
+        expect(lastTool).toHaveProperty("googleSearchRetrieval");
+      });
+
+      it("search tool is not normalized (skipped by normalizeGeminiTools)", () => {
+        const payload: RequestPayload = { contents: [] };
+        applyGeminiTransforms(payload, {
+          model: "gemini-3-pro",
+          googleSearch: { mode: "auto", threshold: 0.3 },
+        });
+        const tools = payload.tools as unknown[];
+        const searchTool = tools[0] as Record<string, unknown>;
+        expect(searchTool).toHaveProperty("googleSearchRetrieval");
+        expect(searchTool).not.toHaveProperty("function");
+        expect(searchTool).not.toHaveProperty("custom");
+      });
+    });
   });
 
   describe("isImageGenerationModel", () => {

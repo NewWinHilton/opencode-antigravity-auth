@@ -5,6 +5,7 @@ import {
   EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
 } from "../constants";
 import { processImageData } from "./image-saver";
+import type { GoogleSearchConfig } from "./transform/types";
 
 const log = createLogger("request-helpers");
 
@@ -784,6 +785,8 @@ export interface VariantThinkingConfig {
   thinkingBudget?: number;
   /** Whether to include thoughts in output */
   includeThoughts?: boolean;
+  /** Google Search configuration */
+  googleSearch?: GoogleSearchConfig;
 }
 
 /**
@@ -803,23 +806,32 @@ export function extractVariantThinkingConfig(
   const google = providerOptions.google as Record<string, unknown> | undefined;
   if (!google) return undefined;
 
+  const result: VariantThinkingConfig = {};
+
   // Gemini 3 native format: { google: { thinkingLevel: "high", includeThoughts: true } }
   if (typeof google.thinkingLevel === "string") {
-    return {
-      thinkingLevel: google.thinkingLevel,
-      includeThoughts: typeof google.includeThoughts === "boolean" ? google.includeThoughts : undefined,
-    };
+    result.thinkingLevel = google.thinkingLevel;
+    result.includeThoughts = typeof google.includeThoughts === "boolean" ? google.includeThoughts : undefined;
   }
 
   // Budget-based format (Claude/Gemini 2.5): { google: { thinkingConfig: { thinkingBudget } } }
   if (google.thinkingConfig && typeof google.thinkingConfig === "object") {
     const tc = google.thinkingConfig as Record<string, unknown>;
     if (typeof tc.thinkingBudget === "number") {
-      return { thinkingBudget: tc.thinkingBudget };
+      result.thinkingBudget = tc.thinkingBudget;
     }
   }
 
-  return undefined;
+  // Extract Google Search config
+  if (google.googleSearch && typeof google.googleSearch === "object") {
+    const search = google.googleSearch as Record<string, unknown>;
+    result.googleSearch = {
+      mode: search.mode === 'auto' || search.mode === 'off' ? search.mode : undefined,
+      threshold: typeof search.threshold === 'number' ? search.threshold : undefined,
+    };
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /**

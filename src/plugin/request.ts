@@ -54,7 +54,7 @@ import {
   needsThinkingRecovery,
 } from "./thinking-recovery";
 import { sanitizeCrossModelPayloadInPlace } from "./transform/cross-model-sanitizer";
-import { isGemini3Model, isImageGenerationModel, buildImageGenerationConfig } from "./transform";
+import { isGemini3Model, isImageGenerationModel, buildImageGenerationConfig, applyGeminiTransforms } from "./transform";
 import {
   resolveModelWithTier,
   resolveModelWithVariant,
@@ -62,6 +62,8 @@ import {
   isClaudeModel,
   isClaudeThinkingModel,
   CLAUDE_THINKING_MAX_OUTPUT_TOKENS,
+  type GoogleSearchConfig,
+  type ThinkingTier,
 } from "./transform";
 import { detectErrorType } from "./recovery";
 
@@ -565,6 +567,8 @@ export function isGenerativeLanguageRequest(input: RequestInfo): input is string
 export interface PrepareRequestOptions {
   /** Enable Claude tool hardening (parameter signatures + system instruction). Default: true */
   claudeToolHardening?: boolean;
+  /** Google Search configuration (global default) */
+  googleSearch?: GoogleSearchConfig;
 }
 
 export function prepareAntigravityRequest(
@@ -1084,120 +1088,21 @@ export function prepareAntigravityRequest(
             }
             requestPayload.tools = finalTools.concat(passthroughTools);
           } else {
-            // Default normalization for non-Claude models (Gemini)
-            // First, flatten any functionDeclarations format into individual tools
-            const flattenedTools: any[] = [];
-            requestPayload.tools.forEach((tool: any) => {
-              if (Array.isArray(tool.functionDeclarations) && tool.functionDeclarations.length > 0) {
-                // Flatten functionDeclarations into individual tool entries
-                tool.functionDeclarations.forEach((decl: any) => {
-                  flattenedTools.push({
-                    name: decl.name,
-                    description: decl.description,
-                    // Convert parameters to input_schema for Gemini format
-                    input_schema: decl.parameters || decl.parametersJsonSchema || decl.input_schema || decl.inputSchema,
-                  });
-                });
-              } else {
-                flattenedTools.push(tool);
-              }
+            // Gemini-specific tool normalization and feature injection
+            // Resolve Google Search config: Variant takes precedence over global default
+            const effectiveSearchConfig: GoogleSearchConfig | undefined = 
+              variantConfig?.googleSearch ?? options?.googleSearch;
+              
+            const geminiResult = applyGeminiTransforms(requestPayload, {
+              model: effectiveModel,
+              normalizedThinking: undefined, // Thinking config already applied above (lines 816-880)
+              tierThinkingBudget,
+              tierThinkingLevel: tierThinkingLevel as ThinkingTier | undefined,
+              googleSearch: effectiveSearchConfig,
             });
-
-            requestPayload.tools = flattenedTools.map((tool: any, toolIndex: number) => {
-              const newTool = { ...tool };
-
-              const schemaCandidates = [
-                newTool.function?.input_schema,
-                newTool.function?.parameters,
-                newTool.function?.inputSchema,
-                newTool.custom?.input_schema,
-                newTool.custom?.parameters,
-                newTool.input_schema,
-                newTool.parameters,
-                newTool.inputSchema,
-              ].filter(Boolean);
-
-              const placeholderSchema = {
-                type: "object",
-                properties: {
-                  [EMPTY_SCHEMA_PLACEHOLDER_NAME]: {
-                    type: "boolean",
-                    description: EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
-                  },
-                },
-                required: [EMPTY_SCHEMA_PLACEHOLDER_NAME],
-              };
-
-              let schema: any = schemaCandidates[0];
-              const schemaObjectOk = schema && typeof schema === "object" && !Array.isArray(schema);
-              if (!schemaObjectOk) {
-                schema = placeholderSchema;
-                toolDebugMissing += 1;
-              }
-
-              const nameCandidate =
-                newTool.name ||
-                newTool.function?.name ||
-                newTool.custom?.name ||
-                `tool-${toolIndex}`;
-
-              if (newTool.function && !newTool.function.input_schema && schema) {
-                newTool.function.input_schema = schema;
-              }
-              if (newTool.custom && !newTool.custom.input_schema && schema) {
-                newTool.custom.input_schema = schema;
-              }
-              if (!newTool.custom && newTool.function) {
-                newTool.custom = {
-                  name: newTool.function.name || nameCandidate,
-                  description: newTool.function.description,
-                  input_schema: schema,
-                };
-              }
-              if (!newTool.custom && !newTool.function) {
-                newTool.custom = {
-                  name: nameCandidate,
-                  description: newTool.description,
-                  input_schema: schema,
-                };
-
-                if (!newTool.parameters && !newTool.input_schema && !newTool.inputSchema) {
-                  newTool.parameters = schema;
-                }
-              }
-              if (newTool.custom && !newTool.custom.input_schema) {
-                newTool.custom.input_schema = schema;
-                toolDebugMissing += 1;
-              }
-
-              toolDebugSummaries.push(
-                `idx=${toolIndex}, hasCustom=${!!newTool.custom}, customSchema=${!!newTool.custom?.input_schema}, hasFunction=${!!newTool.function}, functionSchema=${!!newTool.function?.input_schema}`,
-              );
-
-              return newTool;
-            });
-
-            const normalizedTools = requestPayload.tools as any[];
-            const geminiPlaceholderSchema = {
-              type: "object",
-              properties: {
-                [EMPTY_SCHEMA_PLACEHOLDER_NAME]: {
-                  type: "boolean",
-                  description: EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
-                },
-              },
-              required: [EMPTY_SCHEMA_PLACEHOLDER_NAME],
-            };
-            const geminiDeclarations = normalizedTools.map((tool: any) => {
-              const rawSchema = tool.parameters || tool.input_schema || tool.function?.parameters || tool.function?.input_schema;
-              const cleanedSchema = rawSchema ? cleanJSONSchemaForAntigravity(rawSchema) : geminiPlaceholderSchema;
-              return {
-                name: tool.name || tool.function?.name,
-                description: tool.description || tool.function?.description,
-                parameters: cleanedSchema,
-              };
-            });
-            requestPayload.tools = [{ functionDeclarations: geminiDeclarations }];
+            
+            toolDebugMissing = geminiResult.toolDebugMissing;
+            toolDebugSummaries.push(...geminiResult.toolDebugSummaries);
           }
 
           try {

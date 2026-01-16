@@ -1276,6 +1276,10 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   forceThinkingRecovery,
                   {
                     claudeToolHardening: config.claude_tool_hardening,
+                    googleSearch: config.web_search ? {
+                      mode: config.web_search.default_mode,
+                      threshold: config.web_search.grounding_threshold
+                    } : undefined,
                   },
                 );
 

@@ -5,7 +5,7 @@
  * to their actual API model names and corresponding thinking configurations.
  */
 
-import type { ResolvedModel, ThinkingTier } from "./types";
+import type { ResolvedModel, ThinkingTier, GoogleSearchConfig } from "./types";
 
 /**
  * Thinking tier budgets by model family.
@@ -300,6 +300,7 @@ export function getModelFamily(model: string): "claude" | "gemini-flash" | "gemi
  */
 export interface VariantConfig {
   thinkingBudget?: number;
+  googleSearch?: GoogleSearchConfig;
 }
 
 /**
@@ -376,7 +377,17 @@ export function resolveModelWithVariant(
 ): ResolvedModel {
   const base = resolveModelWithTier(requestedModel);
 
-  if (!variantConfig?.thinkingBudget) {
+  if (!variantConfig) {
+    return base;
+  }
+
+  // Apply Google Search config if present
+  if (variantConfig.googleSearch) {
+    base.googleSearch = variantConfig.googleSearch;
+    base.configSource = "variant";
+  }
+
+  if (!variantConfig.thinkingBudget) {
     return base;
   }
 

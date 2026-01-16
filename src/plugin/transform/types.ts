@@ -80,6 +80,14 @@ export interface ThinkingConfig {
 }
 
 /**
+ * Google Search Grounding configuration.
+ */
+export interface GoogleSearchConfig {
+  mode?: 'auto' | 'off';
+  threshold?: number;
+}
+
+/**
  * Model resolution result with tier information.
  */
 export interface ResolvedModel {
@@ -101,4 +109,6 @@ export interface ResolvedModel {
   explicitQuota?: boolean;
   /** Source of thinking config: "variant" (providerOptions) or "tier" (model suffix) */
   configSource?: "variant" | "tier";
+  /** Google Search configuration from variant or global config */
+  googleSearch?: GoogleSearchConfig;
 }

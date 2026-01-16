@@ -14,6 +14,7 @@ export type {
   RequestPayload,
   ThinkingConfig,
   ResolvedModel,
+  GoogleSearchConfig,
 } from "./types";
 
 // Model resolution

@@ -173,6 +173,22 @@ function applyEnvOverrides(config: AntigravityConfig): AntigravityConfig {
       env.OPENCODE_ANTIGRAVITY_PID_OFFSET_ENABLED === "true"
         ? true
         : config.pid_offset_enabled,
+
+    // Web Search (Gemini Grounding) overrides
+    // OPENCODE_ANTIGRAVITY_WEB_SEARCH=auto|off
+    // OPENCODE_ANTIGRAVITY_WEB_SEARCH_THRESHOLD=0.3
+    web_search: {
+      default_mode:
+        env.OPENCODE_ANTIGRAVITY_WEB_SEARCH === "auto"
+          ? "auto"
+          : env.OPENCODE_ANTIGRAVITY_WEB_SEARCH === "off"
+            ? "off"
+            : config.web_search?.default_mode ?? "off",
+      grounding_threshold:
+        env.OPENCODE_ANTIGRAVITY_WEB_SEARCH_THRESHOLD
+          ? Math.min(1, Math.max(0, parseFloat(env.OPENCODE_ANTIGRAVITY_WEB_SEARCH_THRESHOLD) || 0.3))
+          : config.web_search?.grounding_threshold ?? 0.3,
+    },
   };
 }
 

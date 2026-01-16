@@ -7,7 +7,7 @@
  * - Schema transformation (JSON Schema -> Gemini Schema format)
  */
 
-import type { RequestPayload, ThinkingConfig, ThinkingTier } from "./types";
+import type { RequestPayload, ThinkingConfig, ThinkingTier, GoogleSearchConfig } from "./types";
 
 /**
  * Transform a JSON Schema to Gemini-compatible format.
@@ -205,6 +205,12 @@ export function normalizeGeminiTools(
 
   payload.tools = (payload.tools as unknown[]).map((tool: unknown, toolIndex: number) => {
     const t = tool as Record<string, unknown>;
+    
+    // Skip normalization for Google Search Retrieval tool
+    if (t.googleSearchRetrieval) {
+      return t;
+    }
+
     const newTool = { ...t };
 
     const schemaCandidates = [
@@ -313,6 +319,8 @@ export interface GeminiTransformOptions {
   tierThinkingLevel?: ThinkingTier;
   /** Normalized thinking config from user settings */
   normalizedThinking?: { includeThoughts?: boolean; thinkingBudget?: number };
+  /** Google Search configuration */
+  googleSearch?: GoogleSearchConfig;
 }
 
 export interface GeminiTransformResult {
@@ -327,7 +335,7 @@ export function applyGeminiTransforms(
   payload: RequestPayload,
   options: GeminiTransformOptions,
 ): GeminiTransformResult {
-  const { model, tierThinkingBudget, tierThinkingLevel, normalizedThinking } = options;
+  const { model, tierThinkingBudget, tierThinkingLevel, normalizedThinking, googleSearch } = options;
 
   // 1. Apply thinking config if needed
   if (normalizedThinking) {
@@ -353,6 +361,25 @@ export function applyGeminiTransforms(
     payload.generationConfig = generationConfig;
   }
 
-  // 2. Normalize tools
+  // 2. Apply Google Search (Grounding) if enabled
+  if (googleSearch && googleSearch.mode === 'auto') {
+    const tools = (payload.tools as unknown[]) || [];
+    if (!payload.tools) {
+      payload.tools = tools;
+    }
+
+    // Add Google Search tool
+    // We cast to any[] to avoid TypeScript issues with the loose RequestPayload type
+    (payload.tools as any[]).push({
+      googleSearchRetrieval: {
+        dynamicRetrievalConfig: {
+          mode: "MODE_DYNAMIC",
+          dynamicThreshold: googleSearch.threshold ?? 0.3,
+        },
+      },
+    });
+  }
+
+  // 3. Normalize tools
   return normalizeGeminiTools(payload);
 }
