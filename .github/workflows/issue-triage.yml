@@ -182,11 +182,11 @@ jobs:
           RESPONSE=$(curl -s 'https://jules.googleapis.com/v1alpha/sessions' \
             -X POST \
             -H "Content-Type: application/json" \
-            -H "X-Goog-Api-Key: $JULES_API_KEY" \
+            -H "x-goog-api-key: $JULES_API_KEY" \
             -d "{
               \"prompt\": $ESCAPED_PROMPT,
               \"sourceContext\": {
-                \"source\": \"sources/github/${{ github.repository }}\",
+                \"source\": \"sources/github-${{ github.repository_owner }}-${{ github.event.repository.name }}\",
                 \"githubRepoContext\": {
                   \"startingBranch\": \"main\"
                 }
@@ -196,6 +196,7 @@ jobs:
           
           echo "Jules response: $RESPONSE"
           
+          SESSION_NAME=$(echo "$RESPONSE" | jq -r '.name // empty')
           SESSION_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
           if [ -z "$SESSION_ID" ]; then
             ERROR=$(echo "$RESPONSE" | jq -r '.error.message // "Unknown error"')
@@ -204,14 +205,14 @@ jobs:
             exit 0
           fi
           
-          echo "Session created: $SESSION_ID"
+          echo "Session created: $SESSION_ID (name: $SESSION_NAME)"
           echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
           
           echo "Waiting for Jules to complete (max 15 minutes)..."
           for i in {1..90}; do
             sleep 10
-            STATUS=$(curl -s "https://jules.googleapis.com/v1alpha/sessions/$SESSION_ID" \
-              -H "X-Goog-Api-Key: $JULES_API_KEY")
+            STATUS=$(curl -s "https://jules.googleapis.com/v1alpha/$SESSION_NAME" \
+              -H "x-goog-api-key: $JULES_API_KEY")
             
             STATE=$(echo "$STATUS" | jq -r '.state // empty')
             echo "Attempt $i: State = $STATE"
@@ -220,13 +221,23 @@ jobs:
               echo "Jules finished with state: $STATE"
               
               if [ "$STATE" = "COMPLETED" ]; then
-                OUTPUT=$(echo "$STATUS" | jq -r '.outputs[0].text // empty')
+                ACTIVITIES=$(curl -s "https://jules.googleapis.com/v1alpha/$SESSION_NAME/activities" \
+                  -H "x-goog-api-key: $JULES_API_KEY")
+                
+                echo "Activities response:"
+                echo "$ACTIVITIES" | jq '.'
+                
+                OUTPUT=$(echo "$ACTIVITIES" | jq -r '[.activities[] | select(.agentMessaged != null) | .agentMessaged.agentMessage] | last // empty')
+                
                 if [ -n "$OUTPUT" ]; then
+                  echo "Extracted agent message: $OUTPUT"
                   echo "result<<EOF" >> $GITHUB_OUTPUT
                   echo "$OUTPUT" >> $GITHUB_OUTPUT
                   echo "EOF" >> $GITHUB_OUTPUT
                   echo "jules_success=true" >> $GITHUB_OUTPUT
                   exit 0
+                else
+                  echo "No agentMessaged found in activities"
                 fi
               fi
               
@@ -247,7 +258,7 @@ jobs:
           PROMPT=$(cat triage_prompt.txt)
           ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
           
-          RESPONSE=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=$GEMINI_API_KEY" \
+          RESPONSE=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=$GEMINI_API_KEY" \
             -H "Content-Type: application/json" \
             -d "{
               \"contents\": [{
